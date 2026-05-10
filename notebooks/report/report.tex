@@ -1,0 +1,586 @@
+\documentclass[12pt, a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{parskip}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{natbib}
+
+% Header and footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Group BO — SAAM Project 2026}
+\lhead{Portfolio Allocation with a Carbon Objective}
+\rfoot{Page \thepage}
+
+% Title formatting
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+
+% Spacing
+\onehalfspacing
+
+\begin{document}
+
+%---------------------------------------------------------------
+% COVER PAGE
+%---------------------------------------------------------------
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    
+    {\LARGE \textbf{Portfolio Allocation with a Carbon Objective}}
+    
+    \vspace{0.5cm}
+    {\large Sustainability Aware Asset Management}
+    
+    \vspace{0.3cm}
+    {\large HEC Lausanne — Spring 2026}
+    
+    \vspace{2cm}
+    
+    {\large \textbf{Group BO}}
+    
+    \vspace{0.5cm}
+    {\large [Insert group member names here]}
+    
+    \vspace{2cm}
+    
+    {\large May 29, 2026}
+    
+    \vfill
+    
+    \begin{abstract}
+    \noindent
+    This report implements a climate-aware asset management strategy for a 
+    European equity portfolio. We construct a minimum-variance (MV) portfolio 
+    and a value-weighted (VW) benchmark over the out-of-sample period 2014--2025, 
+    then introduce three carbon-constrained portfolios that progressively reduce 
+    the portfolio carbon footprint using Scope 1 and Scope 2 CO$_2$ emissions. 
+    We find that the MV portfolio is naturally 6--10 times greener than the VW 
+    benchmark, and that halving the carbon footprint of the VW benchmark can be 
+    achieved at very low financial cost. The net zero portfolio (10\% annual 
+    reduction) coincides with the 50\% reduction portfolio, suggesting that a 
+    standard net zero glide path is less demanding than a one-time 50\% reduction 
+    constraint for this European universe.
+    \end{abstract}
+    
+\end{titlepage}
+
+%---------------------------------------------------------------
+% TABLE OF CONTENTS
+%---------------------------------------------------------------
+\tableofcontents
+\newpage
+
+%---------------------------------------------------------------
+% SECTION 1 — INTRODUCTION
+%---------------------------------------------------------------
+\section{Introduction}
+
+This report presents the implementation of a climate-aware asset management 
+strategy for a European equity portfolio. The project is structured in two parts. 
+Part I constructs a minimum-variance (MV) portfolio and compares it to a 
+value-weighted (VW) benchmark over the out-of-sample period 2014--2025. Part II 
+introduces carbon emission constraints, constructing three additional portfolios 
+that progressively reduce the carbon footprint of the investment strategy.
+
+The investment universe consists of European firms drawn from a dataset of 2,545 
+companies with available carbon data. We use Scope 1 and Scope 2 CO$_2$ emissions 
+combined as our measure of carbon output. All portfolios are rebalanced annually, 
+with performance evaluated at the monthly frequency over the period January 2014 
+to December 2025 (144 monthly observations).
+
+%---------------------------------------------------------------
+% SECTION 2 — DATA AND CLEANING
+%---------------------------------------------------------------
+\section{Data and Cleaning}
+
+\subsection{Data Sources}
+
+The following datasets are used throughout the project:
+
+\begin{itemize}
+    \item \textbf{Monthly total return index} (\texttt{DS\_RI\_T\_USD\_M}): 
+    used to compute monthly simple returns
+    \item \textbf{Annual market capitalization} (\texttt{DS\_MV\_T\_USD\_Y}): 
+    used for value-weighted portfolio construction and carbon footprint computation
+    \item \textbf{Monthly market capitalization} (\texttt{DS\_MV\_T\_USD\_M}): 
+    used for value-weighted benchmark weights
+    \item \textbf{Scope 1 CO$_2$ emissions} (\texttt{DS\_CO2\_SCOPE\_1\_Y}): 
+    annual, in tonnes
+    \item \textbf{Scope 2 CO$_2$ emissions} (\texttt{DS\_CO2\_SCOPE\_2\_Y}): 
+    annual, in tonnes
+    \item \textbf{Revenues} (\texttt{DS\_REV\_Y}): annual, in thousands USD, 
+    converted to millions
+    \item \textbf{Static firm information}: ISIN, name, country, region
+\end{itemize}
+
+\subsection{Cleaning Procedure}
+
+\textbf{Price data.} The total return index is loaded at monthly frequency. 
+Prices below 0.5 are treated as missing, as they would generate extreme or 
+infinite returns. Returns are computed as simple percentage changes:
+\[
+R_{i,t} = \frac{P_{i,t} - P_{i,t-1}}{P_{i,t-1}}
+\]
+
+\textbf{Delisting.} When a firm's price series ends before the end of the 
+sample --- indicated by a name suffix such as ``DEAD - DELIST'' in Datastream 
+--- a return of $-100\%$ is assigned at the first month after the last valid 
+price. All subsequent months remain missing.
+
+\textbf{Carbon and revenue data.} Datastream error strings are replaced with 
+missing values. Forward-filling is applied across years within each firm's row 
+to handle isolated missing values. Firms with no carbon data at all are excluded.
+
+\textbf{Revenue conversion.} Revenues are divided by 1,000 to convert from 
+thousands USD to millions USD, consistent with the carbon intensity formula.
+
+%---------------------------------------------------------------
+% SECTION 3 — INVESTMENT SET
+%---------------------------------------------------------------
+\section{Investment Set Construction}
+
+At the end of each year $Y$, the investment set is defined as the set of firms 
+satisfying all of the following criteria:
+
+\begin{enumerate}
+    \item \textbf{Region.} The firm belongs to the European region (EUR) as 
+    defined in the static dataset.
+    
+    \item \textbf{Minimum observations.} The firm has at least 36 non-missing 
+    monthly return observations over the 10-year estimation window ending at 
+    year $Y$.
+    
+    \item \textbf{Stale prices.} The proportion of months with zero return over 
+    the estimation window does not exceed 50\%. Firms exceeding this threshold 
+    are excluded as illiquid.
+    
+    \item \textbf{Valid end-of-year price.} The firm must have a non-missing 
+    return in the final month of the estimation window (December of year $Y$).
+    
+    \item \textbf{Carbon data availability.} The firm must have Scope 1 or 
+    Scope 2 emissions data available at end of year $Y$.
+    
+    \item \textbf{Extreme carbon filter.} Firms whose $E/\text{Cap}$ ratio 
+    (emissions divided by market capitalization) exceeds three times the 
+    value-weighted market carbon footprint for that year are excluded. This 
+    prevents outlier firms from dominating the portfolio carbon footprint. 
+    The filter is applied using only information available at end of year $Y$, 
+    avoiding look-ahead bias.
+\end{enumerate}
+
+The investment set is constructed separately for each rebalancing year from 
+2013 to 2024. The number of eligible firms ranges from approximately 350 to 
+450 per year after all filters are applied.
+
+%---------------------------------------------------------------
+% SECTION 4 — PART I
+%---------------------------------------------------------------
+\section{Part I --- Standard Portfolio Allocation}
+
+\subsection{Minimum Variance Portfolio}
+
+The minimum variance (MV) portfolio is constructed by solving the following 
+optimization problem at the end of each year $Y$:
+
+\begin{align}
+    \min_{\alpha_Y} \quad & \alpha_Y^\top \Sigma_Y \alpha_Y \\
+    \text{subject to} \quad & \sum_i \alpha_{i,Y} = 1 \notag \\
+    & 0 \leq \alpha_{i,Y} \leq 0.05 \quad \text{for all } i \notag
+\end{align}
+
+The covariance matrix $\Sigma_Y$ is estimated from 120 months (10 years) of 
+monthly returns ending at December of year $Y$. Missing returns within the 
+estimation window are replaced by the cross-sectional mean return for that 
+month. A small regularization term ($10^{-6} \times I$) is added to the 
+covariance matrix to ensure numerical stability.
+
+The weight cap of 5\% per firm is imposed to prevent excessive concentration. 
+The optimization is solved using the Sequential Least Squares Programming 
+(SLSQP) method from \texttt{scipy.optimize}, with analytic gradients provided 
+for computational efficiency.
+
+Between rebalancing dates, weights drift with realized returns:
+\[
+\alpha_{i,t+1} = \frac{\alpha_{i,t} \times (1 + R_{i,t+1})}{1 + R_{p,t+1}}
+\]
+
+\subsection{Value-Weighted Benchmark}
+
+The value-weighted (VW) benchmark weights each firm by its relative market 
+capitalization at the end of the previous month:
+\[
+w_{i,t} = \frac{\text{Cap}_{i,t}}{\sum_j \text{Cap}_{j,t}}
+\]
+
+\subsection{Performance Results}
+
+Table~\ref{tab:part1} presents the out-of-sample performance statistics for 
+both portfolios over 2014--2025.
+
+\begin{table}[H]
+    \centering
+    \caption{Portfolio Performance: MV vs VW (2014--2025)}
+    \label{tab:part1}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Metric} & \textbf{P\textsubscript{mv}} & 
+        \textbf{P\textsubscript{vw}} \\
+        \midrule
+        Annualized Return       & 6.56\%   & 8.58\%  \\
+        Annualized Volatility   & 12.94\%  & 15.87\% \\
+        Sharpe Ratio            & 0.35     & 0.41    \\
+        Min Monthly Return      & $-$12.09\% & $-$15.36\% \\
+        Max Monthly Return      & 13.35\%  & 18.22\% \\
+        \bottomrule
+    \end{tabular}
+    \smallskip
+    
+    \footnotesize{\textit{Note:} Risk-free rate set to 2\% per annum. 
+    Sharpe ratio computed as $(\bar{\mu} - r_f) / \sigma \times \sqrt{12}$.}
+\end{table}
+
+The MV portfolio achieves meaningfully lower volatility (12.94\% vs 15.87\%), 
+consistent with its objective of minimizing variance. The return is also lower 
+(6.56\% vs 8.58\%), reflecting the well-known return-risk trade-off. The Sharpe 
+ratio of the MV portfolio (0.35) is slightly below that of the VW benchmark 
+(0.41), suggesting that in this sample the variance reduction does not fully 
+compensate for the lower return. The cumulative return chart (Figure~\ref{fig:cum_part1}) 
+confirms that the MV portfolio grows more steadily, with smaller drawdowns, 
+while the VW benchmark achieves higher terminal wealth.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{../outputs/cumulative_returns_mv_vw.png}
+    \caption{Cumulative returns of the MV and VW portfolios (2014--2025). 
+    The MV portfolio (blue) exhibits lower volatility and smaller drawdowns 
+    relative to the VW benchmark (orange), at the cost of lower terminal wealth.}
+    \label{fig:cum_part1}
+\end{figure}
+
+%---------------------------------------------------------------
+% SECTION 5 — PART II
+%---------------------------------------------------------------
+\section{Part II --- Portfolio Allocation with Carbon Emission Reduction}
+
+\subsection{Carbon Metrics (Section 3.1)}
+
+\textbf{Carbon intensity.} The carbon intensity of firm $i$ in year $Y$ is:
+\[
+CI_{i,Y} = \frac{E_{i,Y}}{\text{Rev}_{i,Y}}
+\]
+where $E_{i,Y} = \text{Scope1}_{i,Y} + \text{Scope2}_{i,Y}$ is total CO$_2$ 
+emissions in tonnes and $\text{Rev}_{i,Y}$ is revenue in millions USD.
+
+\textbf{Weighted Average Carbon Intensity.} The WACI of the portfolio is:
+\[
+\text{WACI}^P_Y = \sum_i \alpha_{i,Y} \times CI_{i,Y}
+\]
+
+\textbf{Carbon Footprint.} The carbon footprint measures emissions attributed 
+to the investor per million USD invested:
+\[
+\text{CF}^P_Y = \sum_i \alpha_{i,Y} \times \frac{E_{i,Y}}{\text{Cap}_{i,Y}}
+\]
+
+For the VW portfolio this simplifies to:
+\[
+\text{CF}^{vw}_Y = \frac{\sum_i E_{i,Y}}{\sum_i \text{Cap}_{i,Y}}
+\]
+
+\begin{table}[H]
+    \centering
+    \caption{Average Carbon Metrics (2013--2024)}
+    \label{tab:carbon}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Metric} & \textbf{P\textsubscript{mv}} & 
+        \textbf{P\textsubscript{vw}} \\
+        \midrule
+        Avg WACI (tCO$_2$ / M USD revenue)  & 54.7  & 135.1 \\
+        Avg CF (tCO$_2$ / M USD invested)   & 22.0  & 153.3 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The MV portfolio is naturally significantly greener than the VW benchmark --- 
+approximately 6 to 10 times lower in carbon footprint across the sample. This 
+is because the MV optimizer tends to select stable, low-volatility firms, which 
+are typically in less carbon-intensive sectors such as utilities, healthcare, 
+and financials.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{../outputs/carbon_metrics.png}
+    \caption{WACI (left) and Carbon Footprint (right) for the MV and VW 
+    portfolios over 2013--2024. Both metrics show a general downward trend, 
+    reflecting real-world improvements in corporate emissions reporting.}
+    \label{fig:carbon_metrics}
+\end{figure}
+
+\textbf{Top 10 firms driving carbon intensity.} Table~\ref{tab:top10} reports 
+the ten firms contributing most to the MV portfolio's weighted average carbon 
+intensity, averaged over the full sample.
+
+\begin{table}[H]
+    \centering
+    \caption{Top 10 Firms by Average CI Contribution (MV Portfolio)}
+    \label{tab:top10}
+    \begin{tabular}{llc}
+        \toprule
+        \textbf{Firm Name} & \textbf{ISIN} & 
+        \textbf{Avg CI Contribution} \\
+        \midrule
+        Elia Group                          & BE0003822393 & 14.00 \\
+        ICTL HTLS GP                        & GB00BHJYC057 & 5.14  \\
+        Koninklijke Vopak                   & NL0009432491 & 5.09  \\
+        National Grid                       & GB00BDR05C01 & 3.95  \\
+        Devro (delisted 14/04/23)           & GB0002670437 & 2.70  \\
+        Coca-Cola HBC                       & CH0198251305 & 2.51  \\
+        Mowi                                & NO0003054108 & 2.13  \\
+        United Utilities Group              & GB00B39J2M42 & 1.91  \\
+        Dignity (delisted 25/05/23)         & GB00BRB37M78 & 1.67  \\
+        Teva Pharmaceutical Industries      & US8816242098 & 1.56  \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{MV Portfolio with 50\% Carbon Constraint --- 
+$P^{mv}_{oos}(0.5)$ (Section 3.2)}
+
+We construct a carbon-constrained MV portfolio by solving:
+
+\begin{align}
+    \min_{\alpha_Y} \quad & \alpha_Y^\top \Sigma_Y \alpha_Y \\
+    \text{subject to} \quad 
+    & \text{CF}^P_Y \leq 0.5 \times \text{CF}^{P_{mv}}_{Y} \notag \\
+    & \sum_i \alpha_{i,Y} = 1 \notag \\
+    & 0 \leq \alpha_{i,Y} \leq 0.05 \quad \text{for all } i \notag
+\end{align}
+
+\begin{table}[H]
+    \centering
+    \caption{Active Investor: $P_{mv}$ vs $P_{mv}(0.5)$}
+    \label{tab:active}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Metric} & \textbf{P\textsubscript{mv}} & 
+        \textbf{P\textsubscript{mv}(0.5)} \\
+        \midrule
+        Annualized Return       & 6.56\%   & 7.29\%  \\
+        Annualized Volatility   & 12.94\%  & 12.61\% \\
+        Sharpe Ratio            & 0.35     & 0.42    \\
+        Min Monthly Return      & $-$12.09\% & $-$12.23\% \\
+        Max Monthly Return      & 13.35\%  & 13.63\% \\
+        Avg CF (tCO$_2$ / M USD) & 22.0   & 10.9    \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Interestingly, $P_{mv}(0.5)$ achieves both higher return and lower volatility 
+than the unconstrained $P_{mv}$, resulting in a higher Sharpe ratio (0.42 vs 
+0.35). This counterintuitive result arises because the carbon constraint 
+effectively forces the optimizer away from certain high-emission, 
+higher-volatility firms, redirecting weights toward cleaner, more stable 
+companies.
+
+\subsection{Tracking Error Minimization with 50\% Carbon Constraint --- 
+$P^{vw}_{oos}(0.5)$ (Section 3.3)}
+
+For the otherwise passive investor, we minimize tracking error relative to the 
+VW benchmark subject to a 50\% carbon footprint reduction:
+
+\begin{align}
+    \min_{\alpha_Y} \quad & (\alpha_Y - \alpha^{vw}_Y)^\top \Sigma_Y 
+    (\alpha_Y - \alpha^{vw}_Y) \\
+    \text{subject to} \quad 
+    & \text{CF}^P_Y \leq 0.5 \times \text{CF}^{P_{vw}}_{Y} \notag \\
+    & \sum_i \alpha_{i,Y} = 1 \notag \\
+    & 0 \leq \alpha_{i,Y} \leq 0.05 \quad \text{for all } i \notag
+\end{align}
+
+\begin{table}[H]
+    \centering
+    \caption{Passive Investor: $P_{vw}$ vs $P_{vw}(0.5)$}
+    \label{tab:passive}
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Metric} & \textbf{P\textsubscript{vw}} & 
+        \textbf{P\textsubscript{vw}(0.5)} \\
+        \midrule
+        Annualized Return       & 8.58\%   & 8.26\%  \\
+        Annualized Volatility   & 15.87\%  & 15.97\% \\
+        Sharpe Ratio            & 0.41     & 0.39    \\
+        Min Monthly Return      & $-$15.36\% & $-$15.42\% \\
+        Max Monthly Return      & 18.22\%  & 18.22\% \\
+        Avg CF (tCO$_2$ / M USD) & 153.3  & 38.6    \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The carbon constraint reduces the Sharpe ratio slightly (0.39 vs 0.41) and 
+marginally increases volatility. However, the financial cost is small --- the 
+return difference is only 32 basis points per year. The cumulative return paths 
+of $P_{vw}$ and $P_{vw}(0.5)$ are nearly identical, confirming that halving 
+the carbon footprint of the VW benchmark can be achieved at very low financial 
+cost for a passive European investor.
+
+\subsection{Comparison of Active and Passive Strategies (Section 3.4)}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{../outputs/carbon_footprint_comparison.png}
+    \caption{Carbon footprint (top) and cumulative returns (bottom) for active 
+    investor portfolios (left) and passive investor portfolios (right).}
+    \label{fig:comparison}
+\end{figure}
+
+The carbon constraint has very different effects depending on the investor type. 
+For the active investor, the constraint improves financial performance, 
+suggesting that the unconstrained MV portfolio was overweighting certain 
+carbon-intensive, relatively volatile firms. For the passive investor, the 
+constraint imposes a small but measurable cost in terms of Sharpe ratio, 
+consistent with the theoretical prediction that constraints cannot improve the 
+unconstrained optimum.
+
+A key finding is that the VW benchmark has a carbon footprint approximately 
+7 times higher than the MV portfolio on average. This suggests that European 
+equity markets remain significantly carbon-intensive at the market-cap-weighted 
+level, and that active low-volatility strategies naturally provide a carbon 
+co-benefit without explicit sustainability constraints.
+
+\subsection{Net Zero Portfolio --- $P^{vw}_{oos}(NZ)$ (Section 4.1)}
+
+The net zero portfolio implements a 10\% annual reduction in carbon footprint 
+from the 2013 VW baseline:
+
+\[
+\text{CF}^P_Y \leq (1 - 0.10)^{Y - 2013} \times \text{CF}^{vw}_{2013}
+\]
+
+for $Y = 2013, \ldots, 2024$, where $\text{CF}^{vw}_{2013} = 222.24$ tonnes 
+CO$_2$ per million USD invested. The optimization problem is identical to 
+Section 3.3 (tracking error minimization) with the net zero constraint 
+replacing the 50\% constraint.
+
+\subsection{Comparison of Passive Strategies (Section 4.2)}
+
+\begin{table}[H]
+    \centering
+    \caption{Passive Investor: $P_{vw}$ vs $P_{vw}(0.5)$ vs $P_{vw}(NZ)$}
+    \label{tab:passive_all}
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Metric} & \textbf{P\textsubscript{vw}} & 
+        \textbf{P\textsubscript{vw}(0.5)} & 
+        \textbf{P\textsubscript{vw}(NZ)} \\
+        \midrule
+        Annualized Return       & 8.58\%     & 8.26\%     & 8.26\%     \\
+        Annualized Volatility   & 15.87\%    & 15.97\%    & 15.97\%    \\
+        Sharpe Ratio            & 0.41       & 0.39       & 0.39       \\
+        Min Monthly Return      & $-$15.36\% & $-$15.42\% & $-$15.42\% \\
+        Max Monthly Return      & 18.22\%    & 18.22\%    & 18.22\%    \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+$P_{vw}(NZ)$ is identical to $P_{vw}(0.5)$ across all years. This occurs 
+because the net zero constraint --- a 10\% annual reduction from the 2013 
+baseline of 222.24 tonnes --- is never binding given that the investment set 
+already achieves lower carbon footprints than required by the net zero path. 
+The 50\% constraint (target $\approx$ 45--111 tonnes depending on the year) 
+is consistently tighter than the net zero target (which declines from 200 in 
+2014 to 64 by 2024). Since $P_{vw}(0.5)$ already achieves carbon footprints 
+in the range of 21--72 tonnes --- well below the net zero target --- the two 
+portfolios coincide.
+
+This is an important practical finding: for this European investment universe, 
+committing to a one-time 50\% carbon reduction already places the portfolio 
+on a trajectory more aggressive than a standard 10\% per year net zero glide 
+path.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{../outputs/passive_portfolios_comparison.png}
+    \caption{Carbon footprint (left) and cumulative returns (right) for 
+    passive investor portfolios: $P_{vw}$, $P_{vw}(0.5)$, and $P_{vw}(NZ)$. 
+    The net zero target path is shown as a dashed green line.}
+    \label{fig:passive_all}
+\end{figure}
+
+%---------------------------------------------------------------
+% SECTION 6 — LIMITATIONS
+%---------------------------------------------------------------
+\section{Limitations}
+
+\begin{itemize}
+    \item \textbf{Data quality and coverage.} Carbon data coverage is limited 
+    before 2010 and uneven across firms, particularly for smaller European 
+    companies. Forward-filling of missing emissions data may introduce 
+    measurement error in carbon intensity calculations, especially when a 
+    firm's actual emissions change significantly year to year.
+
+    \item \textbf{Estimation risk.} The covariance matrix is estimated from 
+    120 monthly observations for a universe of 350--450 firms. With more 
+    parameters than observations, the sample covariance matrix is poorly 
+    conditioned. While regularization and the 5\% weight cap mitigate this, 
+    estimation error remains a significant source of out-of-sample performance 
+    degradation.
+
+    \item \textbf{Carbon constraint feasibility and outlier sensitivity.} The 
+    $E/\text{Cap}$ ratio filter (excluding firms above $3\times$ the market 
+    carbon footprint) was necessary to stabilize the carbon footprint of the 
+    MV portfolio. While economically justified, this filter reduces the 
+    investment universe and may introduce a bias toward smaller, cleaner firms. 
+    The choice of $3\times$ as the threshold is somewhat arbitrary.
+
+    \item \textbf{$P_{vw}(NZ)$ and $P_{vw}(0.5)$ coincidence.} The net zero 
+    portfolio is identical to the 50\% reduction portfolio throughout the 
+    sample. This is because the net zero glide path (10\% annual reduction 
+    from 222 tonnes) is less demanding than the 50\% reduction constraint for 
+    most of the sample period. A steeper net zero path (e.g., 15\% per year) 
+    or a lower baseline would be needed to differentiate the two strategies.
+
+    \item \textbf{Parameter sensitivity.} Key implementation choices --- the 
+    5\% weight cap, the 36-observation minimum, the 50\% stale price threshold, 
+    and the $3\times$ carbon outlier filter --- all affect results. No 
+    sensitivity analysis is conducted on these parameters, and different choices 
+    could yield meaningfully different portfolio compositions and performance 
+    statistics.
+\end{itemize}
+
+%---------------------------------------------------------------
+% SECTION 7 — LLM DISCLOSURE
+%---------------------------------------------------------------
+\section{Use of Large Language Models (LLMs)}
+
+This project made use of Claude (Anthropic) as a support tool during 
+implementation. The LLM was used for the following purposes: debugging Python 
+code and resolving error messages, understanding pandas and scipy API behaviour, 
+improving code structure and readability, and polishing the language and 
+structure of this report. All methodological choices --- including the 
+investment set filters, the carbon outlier exclusion rule, the choice of SLSQP 
+optimization, the weight cap, and the interpretation of all results --- were 
+made by the group. All code was written, reviewed, and understood by group 
+members. The generation of results, tables, and figures was performed entirely 
+by the group's own Python notebooks. The group remains fully responsible for 
+the correctness of the implementation and the academic integrity of this 
+submission.
+
+\end{document}
